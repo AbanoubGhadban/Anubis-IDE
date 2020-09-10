@@ -6,6 +6,9 @@
 import sys
 import glob
 import serial
+import inspect
+import types
+from io import StringIO
 
 import Python_Coloring
 from PyQt5 import QtCore
@@ -260,6 +263,7 @@ class UI(QMainWindow):
         filemenu = menu.addMenu('File')
         Port = menu.addMenu('Port')
         Run = menu.addMenu('Run')
+        self.fastExecutionMenu = menu.addMenu('Fast Execution')
 
         # As any PC or laptop have many ports, so I need to list them to the User
         # so I made (Port_Action) to add the Ports got from (serial_ports()) function
@@ -282,6 +286,8 @@ class UI(QMainWindow):
         RunAction = QAction("Run", self)
         RunAction.triggered.connect(self.Run)
         Run.addAction(RunAction)
+
+        self.fastExecutionMenu.aboutToShow.connect(self.populate_fast_execution_menu)
 
         # Making and adding File Features
         Save_Action = QAction("Save", self)
@@ -311,6 +317,14 @@ class UI(QMainWindow):
         self.setCentralWidget(widget)
         self.show()
 
+    def populate_fast_execution_menu(self):
+        functions = self.get_functions_list()
+        self.fastExecutionMenu.clear()
+        for fname, fobject in functions:
+            a = QAction(fname, self)
+            a.triggered.connect(self.execute_function(fname, fobject))
+            self.fastExecutionMenu.addAction(a)
+
     ###########################        Start OF the Functions          ##################
     def Run(self):
         if self.port_flag == 0:
@@ -324,6 +338,62 @@ class UI(QMainWindow):
 
         else:
             text2.append("Please Select Your Port Number First")
+
+    def get_functions_list(self):
+        code = text.toPlainText()
+        codeModule = types.ModuleType('codeModule')
+        try:
+            exec(code, codeModule.__dict__)
+        except:
+            pass
+        functions = [ (name, obj) for name,obj in inspect.getmembers(codeModule) if inspect.isfunction(obj) ]
+        return functions
+
+    def get_function_parameters(self, function_object):
+        args_specs = inspect.getfullargspec(function_object)
+        _args, _default_values = args_specs[0], args_specs[3]
+        values = []
+        for i in range(len(_args)):
+            has_default_value = _default_values is not None and (len(_args) - i) <= len(_default_values)
+            msg = "Type value of parameter " + _args[i]
+            if has_default_value:
+                msg += " leave it empty to use the default value (" + str(_default_values[i - (len(_args) - len(_default_values))]) + ")"
+            inp, okpressed = QInputDialog.getText(self, _args[i] + " Value", msg)
+            if not okpressed:
+                return None
+
+            if inp.strip() == "":
+                if has_default_value:
+                    values.append(str(_default_values[i - (len(_args) - len(_default_values))]))
+                else:
+                    return None
+            else:
+                values.append(inp)
+        return values
+
+    def execute_function(self, functionName, functionObject):
+        def menu_callback():
+            stdout = StringIO()
+            old_std_out = sys.stdin
+            sys.stdout = stdout
+
+            parameter_values = self.get_function_parameters(functionObject)
+            if parameter_values is None:
+                QMessageBox.information(self, "Operation Cancelled", "Execution of the function is cancelled")
+                return
+            parameters_str = ",".join(parameter_values)
+            retValue = None
+            try:
+                retValue = eval("functionObject(" + parameters_str + ")")
+            except:
+                QMessageBox.information(self, "Operation Failed", "Failed to execute the function")
+                return
+            finally:
+                sys.stdout = old_std_out
+
+            text2.append(stdout.getvalue())
+            text2.append("*\t" + functionName + " finished and returned\n**\t" + repr(retValue) + "\n")
+        return menu_callback
 
 
     # this function is made to get which port was selected by the user
